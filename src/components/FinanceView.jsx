@@ -1,120 +1,62 @@
-import React from 'react';
-import { computeFinancials, formatINR } from '../utils';
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { formatINR, formatDateTime, orderItemNames } from '../utils';
+import { Plus } from 'lucide-react';
+import ConfirmModal from './ConfirmModal';
 
-export default function FinanceView({ orders }) {
-  const totals = orders.reduce((acc, o) => {
-    const f = computeFinancials(o);
-    acc.grossSales        += f.customerTotal;
-    acc.supplierCost      += f.supplierTotal;
-    acc.totalProfit       += f.profit;
-    acc.totalReceived     += f.receivedFromBuyer;
-    acc.totalPaid         += f.paidToSupplier;
-    acc.pendingToCollect  += Math.max(0, f.pendingToCollect);
-    acc.pendingToPay      += Math.max(0, f.pendingToPay);
-    return acc;
-  }, {
-    grossSales: 0, supplierCost: 0, totalProfit: 0,
-    totalReceived: 0, totalPaid: 0,
-    pendingToCollect: 0, pendingToPay: 0
-  });
+export default function FinanceView({ transactions, orders, deleteTransaction }) {
+  const nav = useNavigate();
+  const sorted = [...transactions].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const totalCr = transactions.filter(t => t.type === 'credit').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const totalDr = transactions.filter(t => t.type === 'debit').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const [confirmDelete, setConfirmDelete] = useState(null);
 
-  const netCash = totals.totalReceived - totals.totalPaid;
-
-  // Outstanding orders: payment is not fully settled
-  const outstandingOrders = orders.filter(o => {
-    const f = computeFinancials(o);
-    return f.pendingToCollect > 0 || f.pendingToPay > 0;
-  }).reverse();
+  const orderLabel = (oid) => { const o = orders.find(o => o.id === oid); return o ? orderItemNames(o) : oid; };
 
   return (
     <div className="page-shell fade-in">
-      <div className="page-header">
-        <h2>Finances</h2>
-        <p>Running totals across all orders</p>
+      <div className="flex justify-between items-center">
+        <div className="page-header"><h2>Finances</h2><p>{transactions.length} transactions</p></div>
+        <button className="btn btn-primary btn-sm" onClick={() => nav('/finance/new')}><Plus size={14} /> New Txn</button>
       </div>
 
-      {/* Summary */}
-      <div className="card">
-        <div className="section-label">Summary</div>
-        <div className="finance-row">
-          <span className="fr-label">Gross sales value</span>
-          <span className="fr-val">Rs.{formatINR(totals.grossSales)}</span>
-        </div>
-        <div className="finance-row">
-          <span className="fr-label">Supplier cost</span>
-          <span className="fr-val" style={{ color: 'var(--red)' }}>Rs.{formatINR(totals.supplierCost)}</span>
-        </div>
-        <div className="finance-row" style={{ fontWeight: 700 }}>
-          <span className="fr-label" style={{ color: 'var(--txt)', fontWeight: 700 }}>Net Profit</span>
-          <span className="fr-val" style={{ color: 'var(--green)' }}>Rs.{formatINR(totals.totalProfit)}</span>
+      <div className="card card-sm" style={{ background: 'var(--bg-2)' }}>
+        <div className="finance-row"><span className="fr-label">Credits (received)</span><span className="fr-val" style={{ color: 'var(--green)' }}>Rs.{formatINR(totalCr)}</span></div>
+        <div className="finance-row"><span className="fr-label">Debits (paid out)</span><span className="fr-val" style={{ color: 'var(--red)' }}>Rs.{formatINR(totalDr)}</span></div>
+        <div className="finance-row" style={{ fontWeight: 700, borderTop: '1px solid var(--border-hi)', paddingTop: '0.4rem' }}>
+          <span className="fr-label" style={{ fontWeight: 700, color: 'var(--txt)' }}>Net</span>
+          <span className="fr-val" style={{ color: totalCr - totalDr >= 0 ? 'var(--green)' : 'var(--red)' }}>Rs.{formatINR(Math.abs(totalCr - totalDr))} {totalCr - totalDr < 0 ? '(deficit)' : ''}</span>
         </div>
       </div>
 
-      {/* Cash flow */}
-      <div className="card">
-        <div className="section-label">Cash Flow</div>
-        <div className="finance-row">
-          <span className="fr-label">Received from buyers</span>
-          <span className="fr-val" style={{ color: 'var(--green)' }}>Rs.{formatINR(totals.totalReceived)}</span>
-        </div>
-        <div className="finance-row">
-          <span className="fr-label">Paid to suppliers</span>
-          <span className="fr-val" style={{ color: 'var(--red)' }}>Rs.{formatINR(totals.totalPaid)}</span>
-        </div>
-        <div className="finance-row" style={{ fontWeight: 700 }}>
-          <span className="fr-label" style={{ color: 'var(--txt)', fontWeight: 700 }}>Net Cash in Hand</span>
-          <span className="fr-val" style={{ color: netCash >= 0 ? 'var(--green)' : 'var(--red)' }}>
-            Rs.{formatINR(Math.abs(netCash))} {netCash < 0 ? '(deficit)' : ''}
-          </span>
-        </div>
-      </div>
-
-      {/* Pending */}
-      <div className="card">
-        <div className="section-label">Pending</div>
-        <div className="finance-row">
-          <span className="fr-label">Still to collect from buyers</span>
-          <span className="fr-val" style={{ color: 'var(--amber)' }}>Rs.{formatINR(totals.pendingToCollect)}</span>
-        </div>
-        <div className="finance-row">
-          <span className="fr-label">Still to pay suppliers</span>
-          <span className="fr-val" style={{ color: 'var(--red)' }}>Rs.{formatINR(totals.pendingToPay)}</span>
-        </div>
-      </div>
-
-      {/* Outstanding order list */}
-      {outstandingOrders.length > 0 && (
-        <div>
-          <div className="section-label">Outstanding Orders</div>
-          <div className="flex-col gap-2">
-            {outstandingOrders.map(o => {
-              const f = computeFinancials(o);
-              return (
-                <div key={o.id} className="card card-sm">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{o.itemName || 'Untitled'}</div>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--txt-2)', marginTop: '0.15rem' }}>{o.customerName}</div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      {f.pendingToCollect > 0 && (
-                        <div style={{ fontSize: '0.8rem', color: 'var(--amber)', fontWeight: 600 }}>
-                          Collect Rs.{formatINR(f.pendingToCollect)}
-                        </div>
-                      )}
-                      {f.pendingToPay > 0 && (
-                        <div style={{ fontSize: '0.8rem', color: 'var(--red)', fontWeight: 600 }}>
-                          Pay Rs.{formatINR(f.pendingToPay)}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+      <div className="section-label">Transaction Log</div>
+      {sorted.length === 0 ? (
+        <div className="empty-state">No transactions yet.</div>
+      ) : (
+        <div className="table-wrap">
+          <table className="txn-table">
+            <thead>
+              <tr><th>Date</th><th>Type</th><th>Amt</th><th>Order</th><th>Party</th><th></th></tr>
+            </thead>
+            <tbody>
+              {sorted.map(t => (
+                <tr key={t.id}>
+                  <td style={{ fontSize: '0.7rem', color: 'var(--txt-3)' }}>{formatDateTime(t.date)}</td>
+                  <td><span className={t.type === 'credit' ? 'credit' : 'debit'}>{t.type === 'credit' ? 'CR' : 'DR'}</span></td>
+                  <td className={t.type === 'credit' ? 'credit' : 'debit'}>{t.type === 'credit' ? '+' : '-'}Rs.{formatINR(t.amount)}</td>
+                  <td style={{ fontSize: '0.7rem', maxWidth: '80px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{orderLabel(t.orderId)}</td>
+                  <td style={{ fontSize: '0.7rem' }}>{t.partyName}</td>
+                  <td className="actions">
+                    <button className="btn btn-ghost btn-sm" onClick={() => nav(`/finance/edit/${t.id}`)}>Edit</button>
+                    <button className="btn btn-danger btn-sm" style={{ marginLeft: '0.15rem' }} onClick={() => setConfirmDelete(t.id)}>Del</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
+      {confirmDelete && <ConfirmModal message="Are you sure you want to delete this transaction?" onConfirm={() => { deleteTransaction(confirmDelete); setConfirmDelete(null); }} onCancel={() => setConfirmDelete(null)} />}
     </div>
   );
 }

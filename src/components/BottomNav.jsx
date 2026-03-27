@@ -1,22 +1,30 @@
 import React from 'react';
-import { LayoutDashboard, List, IndianRupee, Users } from 'lucide-react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { LayoutDashboard, List, IndianRupee, Users, Store } from 'lucide-react';
 
 const TABS = [
-  { id: 'dashboard', label: 'Home',     icon: LayoutDashboard },
-  { id: 'orders',    label: 'Orders',   icon: List },
-  { id: 'finance',   label: 'Finance',  icon: IndianRupee },
-  { id: 'customers', label: 'Customers', icon: Users },
+  { path: '/',           label: 'Home',      icon: LayoutDashboard },
+  { path: '/orders',     label: 'Orders',    icon: List },
+  { path: '/finance',    label: 'Finance',   icon: IndianRupee },
+  { path: '/customers',  label: 'Buyers',    icon: Users },
+  { path: '/suppliers',  label: 'Suppliers', icon: Store },
 ];
 
-export default function BottomNav({ current, onChange }) {
+export default function BottomNav() {
+  const nav = useNavigate();
+  const { pathname } = useLocation();
+
   return (
     <nav className="bottom-nav">
-      {TABS.map(({ id, label, icon: Icon }) => (
-        <button key={id} className={`nav-btn ${current === id ? 'active' : ''}`} onClick={() => onChange(id)}>
-          <Icon size={20} strokeWidth={1.75} />
-          <span>{label}</span>
-        </button>
-      ))}
+      {TABS.map(({ path, label, icon: Icon }) => {
+        const active = path === '/' ? pathname === '/' : pathname.startsWith(path);
+        return (
+          <button key={path} className={`nav-btn ${active ? 'active' : ''}`} onClick={() => nav(path)}>
+            <Icon size={17} strokeWidth={1.75} />
+            <span>{label}</span>
+          </button>
+        );
+      })}
     </nav>
   );
 }

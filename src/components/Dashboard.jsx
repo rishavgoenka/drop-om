@@ -1,105 +1,123 @@
-import React from 'react';
-import { computeFinancials, shippingBadge, paymentBadge, formatINR, formatDate } from '../utils';
-import { TrendingUp, AlertCircle, Clock } from 'lucide-react';
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { computeOrderTotals, derivePaymentStatus, deriveSupplierStatus, formatINR, shippingBadge, paymentBadge, orderItemNames } from '../utils';
 
-export default function Dashboard({ orders, onNewOrder, onSelectOrder }) {
-  // Aggregate financials across all orders
-  const totals = orders.reduce((acc, o) => {
-    const f = computeFinancials(o);
-    acc.profit            += f.profit;
-    acc.pendingToCollect  += Math.max(0, f.pendingToCollect);
-    acc.pendingToPay      += Math.max(0, f.pendingToPay);
-    acc.supplierTotal     += f.supplierTotal;
-    acc.customerTotal     += f.customerTotal;
-    acc.receivedTotal     += f.receivedFromBuyer;
-    acc.paidTotal         += f.paidToSupplier;
-    return acc;
-  }, { profit: 0, pendingToCollect: 0, pendingToPay: 0, supplierTotal: 0, customerTotal: 0, receivedTotal: 0, paidTotal: 0 });
+export default function Dashboard({ orders, transactions }) {
+  const nav = useNavigate();
+  const [expanded, setExpanded] = useState(null);
+  const toggle = (c) => setExpanded(prev => prev === c ? null : c);
 
-  const recentOrders = [...orders].reverse().slice(0, 10);
+  let totalProfit = 0, totalExcess = 0, pendingCollect = 0, pendingPay = 0, totalRecv = 0, totalPaid = 0;
+  const collectList = [], payList = [];
+
+  orders.forEach(o => {
+    const t = computeOrderTotals(o);
+    const ps = derivePaymentStatus(o, transactions);
+    const ss = deriveSupplierStatus(o, transactions);
+    totalProfit += t.profit;
+    totalExcess += ps.excess;
+    totalRecv += ps.received;
+    totalPaid += ss.paid;
+    if (ps.pending > 0) { pendingCollect += ps.pending; collectList.push({ o, amt: ps.pending }); }
+    if (ss.remaining > 0) { pendingPay += ss.remaining; payList.push({ o, amt: ss.remaining }); }
+  });
+
+  const effectiveProfit = totalProfit + totalExcess;
+  const netCash = totalRecv - totalPaid;
 
   return (
     <div className="page-shell fade-in">
-
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 800, letterSpacing: '-0.03em' }}>drop-om</h2>
-          <p style={{ fontSize: '0.78rem', color: 'var(--txt-3)', marginTop: '0.1rem' }}>Order & Finance Tracker</p>
-        </div>
-        <button className="btn btn-primary btn-sm" onClick={onNewOrder}>+ New Order</button>
+      <div className="page-header">
+        <h2 style={{ fontSize: '1.4rem', fontWeight: 800 }}>drop-om</h2>
       </div>
 
-      {/* Stat cards */}
       <div className="card-grid">
-        <div className="stat-card">
+        <div className="stat-card" onClick={() => toggle('profit')}>
           <div className="label">Total Profit</div>
-          <div className="value green">Rs.{formatINR(totals.profit)}</div>
-          <div className="sub">{orders.length} orders</div>
+          <div className="value green">Rs.{formatINR(effectiveProfit)}</div>
+          <div className="sub">{orders.length} orders{totalExcess > 0 ? ` (+${formatINR(totalExcess)} excess)` : ''}</div>
         </div>
-        <div className="stat-card">
+        <div className="stat-card" onClick={() => toggle('collect')}>
           <div className="label">To Collect</div>
-          <div className="value amber">Rs.{formatINR(totals.pendingToCollect)}</div>
-          <div className="sub">pending from buyers</div>
+          <div className="value amber">Rs.{formatINR(pendingCollect)}</div>
+          <div className="sub">{collectList.length} pending</div>
         </div>
-        <div className="stat-card">
+        <div className="stat-card" onClick={() => toggle('pay')}>
           <div className="label">To Pay</div>
-          <div className="value red">Rs.{formatINR(totals.pendingToPay)}</div>
-          <div className="sub">due to suppliers</div>
+          <div className="value red">Rs.{formatINR(pendingPay)}</div>
+          <div className="sub">{payList.length} pending</div>
         </div>
-        <div className="stat-card">
+        <div className="stat-card" onClick={() => toggle('cash')}>
           <div className="label">Net Cash</div>
-          <div className={`value ${totals.receivedTotal - totals.paidTotal >= 0 ? 'green' : 'red'}`}>
-            Rs.{formatINR(Math.abs(totals.receivedTotal - totals.paidTotal))}
-          </div>
-          <div className="sub">{totals.receivedTotal - totals.paidTotal >= 0 ? 'in hand' : 'deficit'}</div>
+          <div className={`value ${netCash >= 0 ? 'green' : 'red'}`}>Rs.{formatINR(Math.abs(netCash))}</div>
+          <div className="sub">{netCash >= 0 ? 'in hand' : 'deficit'}</div>
         </div>
       </div>
 
-      {/* Recent orders */}
-      <div>
-        <div className="section-label">Recent Orders</div>
-        {recentOrders.length === 0 ? (
-          <div className="empty-state">
-            <div className="icon">
-              <TrendingUp size={32} strokeWidth={1.5} />
+      {expanded === 'collect' && collectList.length > 0 && (
+        <div className="fade-in flex-col gap-2">
+          <div className="section-label">Pending from Buyers</div>
+          {collectList.map(({ o, amt }) => (
+            <div key={o.id} className="order-item" onClick={() => nav(`/orders/${o.id}`)}>
+              <div className="order-main"><div className="item-name">{orderItemNames(o)}</div><div className="cust-name">{o.customerName}</div></div>
+              <div className="order-right"><div style={{ fontWeight: 700, color: 'var(--amber)' }}>Rs.{formatINR(amt)}</div></div>
             </div>
-            <p>No orders yet. Add your first one.</p>
-          </div>
-        ) : (
-          <div className="flex-col gap-2">
-            {recentOrders.map(order => {
-              const f = computeFinancials(order);
-              const sb = shippingBadge(order.shippingStatus);
-              const pb = paymentBadge(order.paymentStatus);
-              return (
-                <div key={order.id} className="order-item" onClick={() => onSelectOrder(order)}>
-                  <div className="order-main">
-                    <div className="item-name">{order.itemName || 'Untitled Item'}</div>
-                    <div className="cust-name">{order.customerName}</div>
-                    <div className="badges">
-                      <span className={`badge ${sb.cls}`}>{sb.label}</span>
-                      <span className={`badge ${pb.cls}`}>{pb.label}</span>
-                      {f.pendingToCollect > 0 && (
-                        <span className="badge badge-amber">Collect Rs.{formatINR(f.pendingToCollect)}</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="order-right">
-                    <div className="order-profit">+Rs.{formatINR(f.profit)}</div>
-                    <div className="order-date">{formatDate(order.date)}</div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+          ))}
+        </div>
+      )}
 
-      {/* Data disclosure */}
-      <div className="info-note">
-        All data is stored locally on this device in your browser's LocalStorage. Nothing is sent to any server. Clearing your browser data will erase all orders.
-      </div>
+      {expanded === 'pay' && payList.length > 0 && (
+        <div className="fade-in flex-col gap-2">
+          <div className="section-label">Pending to Suppliers</div>
+          {payList.map(({ o, amt }) => (
+            <div key={o.id} className="order-item" onClick={() => nav(`/orders/${o.id}`)}>
+              <div className="order-main"><div className="item-name">{orderItemNames(o)}</div><div className="cust-name">{o.customerName}</div></div>
+              <div className="order-right"><div style={{ fontWeight: 700, color: 'var(--red)' }}>Rs.{formatINR(amt)}</div></div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {expanded === 'cash' && (
+        <div className="card card-sm fade-in">
+          <div className="finance-row"><span className="fr-label">Received from buyers</span><span className="fr-val" style={{ color: 'var(--green)' }}>Rs.{formatINR(totalRecv)}</span></div>
+          <div className="finance-row"><span className="fr-label">Paid to suppliers</span><span className="fr-val" style={{ color: 'var(--red)' }}>Rs.{formatINR(totalPaid)}</span></div>
+          <div className="finance-row" style={{ fontWeight: 700 }}><span className="fr-label" style={{ fontWeight: 700, color: 'var(--txt)' }}>Net</span><span className="fr-val" style={{ color: netCash >= 0 ? 'var(--green)' : 'var(--red)' }}>Rs.{formatINR(Math.abs(netCash))}</span></div>
+        </div>
+      )}
+
+      {expanded === 'profit' && (
+        <div className="card card-sm fade-in">
+          <div className="finance-row"><span className="fr-label">Order margins (SP − CP)</span><span className="fr-val" style={{ color: 'var(--green)' }}>Rs.{formatINR(totalProfit)}</span></div>
+          {totalExcess > 0 && <div className="finance-row"><span className="fr-label">Excess payments</span><span className="fr-val" style={{ color: 'var(--green)' }}>Rs.{formatINR(totalExcess)}</span></div>}
+        </div>
+      )}
+
+      <div className="section-label mt-2">Recent Orders</div>
+      {orders.length === 0 ? (
+        <div className="empty-state">No orders yet.</div>
+      ) : (
+        <div className="flex-col gap-2">
+          {[...orders].reverse().slice(0, 8).map(o => {
+            const t = computeOrderTotals(o);
+            const ps = derivePaymentStatus(o, transactions);
+            const sb = shippingBadge(o.shippingStatus);
+            const pb = paymentBadge(ps.status);
+            return (
+              <div key={o.id} className="order-item" onClick={() => nav(`/orders/${o.id}`)}>
+                <div className="order-main">
+                  <div className="item-name">{orderItemNames(o)}</div>
+                  <div className="cust-name">{o.customerName}</div>
+                  <div className="badges"><span className={`badge ${sb.cls}`}>{sb.label}</span><span className={`badge ${pb.cls}`}>{pb.label}</span></div>
+                </div>
+                <div className="order-right"><div className="order-profit">+Rs.{formatINR(t.profit)}</div></div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+
     </div>
   );
 }

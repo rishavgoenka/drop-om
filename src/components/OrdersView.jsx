@@ -1,96 +1,102 @@
 import React, { useState } from 'react';
-import { computeFinancials, shippingBadge, paymentBadge, formatINR, formatDate } from '../utils';
-import { Search } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { computeOrderTotals, derivePaymentStatus, shippingBadge, paymentBadge, formatINR, formatDate, orderItemNames } from '../utils';
+import { Search, Plus } from 'lucide-react';
 
-const SHIPPING_STATUSES = ['all', 'ordered', 'in_transit', 'delivered'];
-const PAYMENT_STATUSES  = ['all', 'due', 'adv', 'partially', 'paid'];
+const PAY_FILTERS = [
+  { key: 'all', label: 'All' },
+  { key: 'unpaid', label: 'Unpaid' },
+  { key: 'partially', label: 'Partial' },
+  { key: 'paid', label: 'Paid' },
+];
 
-export default function OrdersView({ orders, onSelectOrder, onNewOrder }) {
-  const [search, setSearch]     = useState('');
-  const [shipFilter, setShip]   = useState('all');
-  const [payFilter, setPay]     = useState('all');
+const SHIP_FILTERS = [
+  { key: 'all', label: 'All' },
+  { key: 'ordered', label: 'Ordered' },
+  { key: 'in_transit', label: 'In Transit' },
+  { key: 'delivered', label: 'Delivered' },
+];
 
-  const filtered = orders
-    .filter(o => {
-      if (search) {
-        const q = search.toLowerCase();
-        return (o.itemName || '').toLowerCase().includes(q) ||
-               (o.customerName || '').toLowerCase().includes(q);
-      }
-      return true;
-    })
-    .filter(o => shipFilter === 'all' || o.shippingStatus === shipFilter)
-    .filter(o => payFilter  === 'all' || o.paymentStatus  === payFilter)
-    .reverse(); // newest first
+export default function OrdersView({ orders, transactions }) {
+  const nav = useNavigate();
+  const [search, setSearch] = useState('');
+  const [payF, setPayF] = useState('all');
+  const [shipF, setShipF] = useState('all');
+
+  const filtered = [...orders].reverse().filter(o => {
+    if (search) {
+      const q = search.toLowerCase();
+      if (!orderItemNames(o).toLowerCase().includes(q) && !(o.customerName || '').toLowerCase().includes(q)) return false;
+    }
+    if (shipF !== 'all' && o.shippingStatus !== shipF) return false;
+    if (payF !== 'all') {
+      const ps = derivePaymentStatus(o, transactions);
+      if (ps.status !== payF) return false;
+    }
+    return true;
+  });
 
   return (
     <div className="page-shell fade-in">
       <div className="flex justify-between items-center">
-        <div className="page-header">
-          <h2>Orders</h2>
-          <p>{filtered.length} of {orders.length} orders</p>
-        </div>
-        <button className="btn btn-primary btn-sm" onClick={onNewOrder}>+ New</button>
+        <div className="page-header"><h2>Orders</h2><p>{filtered.length} of {orders.length}</p></div>
+        <button className="btn btn-primary btn-sm" onClick={() => nav('/orders/new')}><Plus size={14} /> New</button>
       </div>
 
-      {/* Search */}
       <div style={{ position: 'relative' }}>
-        <Search size={15} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--txt-3)', pointerEvents: 'none' }} />
-        <input
-          type="text"
-          placeholder="Search item or customer..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{ paddingLeft: '2.25rem' }}
-        />
+        <Search size={13} style={{ position: 'absolute', left: '0.6rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--txt-3)', pointerEvents: 'none' }} />
+        <input type="text" placeholder="Search customer or item..." value={search} onChange={e => setSearch(e.target.value)} style={{ paddingLeft: '1.9rem' }} />
       </div>
 
-      {/* Filters */}
-      <div className="flex gap-2 flex-wrap">
-        {PAYMENT_STATUSES.map(s => (
-          <button key={s} className={`btn btn-sm ${payFilter === s ? 'btn-primary' : 'btn-ghost'}`}
-            onClick={() => setPay(s)} style={{ textTransform: 'capitalize', padding: '0.3rem 0.7rem' }}>
-            {s === 'all' ? 'All Payments' : paymentBadge(s).label}
-          </button>
-        ))}
-      </div>
-      <div className="flex gap-2 flex-wrap">
-        {SHIPPING_STATUSES.map(s => (
-          <button key={s} className={`btn btn-sm ${shipFilter === s ? 'btn-primary' : 'btn-ghost'}`}
-            onClick={() => setShip(s)} style={{ textTransform: 'capitalize', padding: '0.3rem 0.7rem' }}>
-            {s === 'all' ? 'All Shipping' : shippingBadge(s).label}
-          </button>
+      {/* Payment filter */}
+      <div className="flex gap-1 flex-wrap">
+        {PAY_FILTERS.map(f => (
+          <button key={f.key} className={`btn btn-sm ${payF === f.key ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setPayF(f.key)}
+            style={{ padding: '0.2rem 0.5rem', fontSize: '0.72rem' }}>{f.label}</button>
         ))}
       </div>
 
-      {/* List */}
+      {/* Shipping filter */}
+      <div className="flex gap-1 flex-wrap" style={{ marginTop: '-0.5rem' }}>
+        {SHIP_FILTERS.map(f => (
+          <button key={f.key} className={`btn btn-sm ${shipF === f.key ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setShipF(f.key)}
+            style={{ padding: '0.2rem 0.5rem', fontSize: '0.72rem' }}>{f.label}</button>
+        ))}
+      </div>
+
       {filtered.length === 0 ? (
-        <div className="empty-state">No orders match your filters.</div>
+        <div className="empty-state">No orders match.</div>
       ) : (
-        <div className="flex-col gap-2">
-          {filtered.map(order => {
-            const f  = computeFinancials(order);
-            const sb = shippingBadge(order.shippingStatus);
-            const pb = paymentBadge(order.paymentStatus);
+        <div className="flex-col" style={{ gap: '1px', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+          {/* Header row */}
+          <div style={{ display: 'grid', gridTemplateColumns: '70px 1fr 80px 70px', padding: '0.35rem 0.65rem', background: 'var(--bg-2)', fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--txt-3)', borderBottom: '1px solid var(--border)' }}>
+            <span>Date</span><span>Particulars</span><span style={{ textAlign: 'right' }}>Amount</span><span style={{ textAlign: 'right' }}>Profit</span>
+          </div>
+          {filtered.map((o, i) => {
+            const t = computeOrderTotals(o);
+            const ps = derivePaymentStatus(o, transactions);
+            const sb = shippingBadge(o.shippingStatus);
+            const pb = paymentBadge(ps.status);
             return (
-              <div key={order.id} className="order-item" onClick={() => onSelectOrder(order)}>
-                <div className="order-main">
-                  <div className="item-name">{order.itemName || 'Untitled Item'}</div>
-                  <div className="cust-name">{order.customerName} {order.customerPhone ? `· ${order.customerPhone}` : ''}</div>
-                  <div className="badges">
+              <div key={o.id} onClick={() => nav(`/orders/${o.id}`)} style={{ display: 'grid', gridTemplateColumns: '70px 1fr 80px 70px', padding: '0.55rem 0.65rem', background: i % 2 === 0 ? 'var(--bg-1)' : 'var(--bg)', cursor: 'pointer', transition: 'background 0.15s', borderBottom: i < filtered.length - 1 ? '1px solid var(--border)' : 'none', alignItems: 'start' }}
+                onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-3)'}
+                onMouseLeave={e => e.currentTarget.style.background = i % 2 === 0 ? 'var(--bg-1)' : 'var(--bg)'}
+              >
+                <span style={{ fontSize: '0.7rem', color: 'var(--txt-3)', whiteSpace: 'nowrap', paddingTop: '0.1rem' }}>{formatDate(o.date)}</span>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: '0.82rem', marginBottom: '0.15rem' }}>{o.customerName}</div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--txt-2)', marginBottom: '0.2rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{orderItemNames(o)}</div>
+                  <div className="flex gap-1 flex-wrap">
                     <span className={`badge ${sb.cls}`}>{sb.label}</span>
                     <span className={`badge ${pb.cls}`}>{pb.label}</span>
-                    {f.pendingToCollect > 0 && (
-                      <span className="badge badge-amber">Collect Rs.{formatINR(f.pendingToCollect)}</span>
-                    )}
-                    {f.pendingToPay > 0 && (
-                      <span className="badge badge-red">Pay Rs.{formatINR(f.pendingToPay)}</span>
-                    )}
                   </div>
                 </div>
-                <div className="order-right">
-                  <div className="order-profit">+Rs.{formatINR(f.profit)}</div>
-                  <div className="order-date">{formatDate(order.date)}</div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '0.8rem', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>Rs.{formatINR(t.customerOwes)}</div>
+                  {ps.pending > 0 && <div style={{ fontSize: '0.65rem', color: 'var(--amber)', marginTop: '0.1rem' }}>-Rs.{formatINR(ps.pending)}</div>}
+                </div>
+                <div style={{ textAlign: 'right', fontSize: '0.8rem', fontWeight: 700, color: 'var(--green)', fontVariantNumeric: 'tabular-nums' }}>
+                  Rs.{formatINR(t.profit)}
                 </div>
               </div>
             );
