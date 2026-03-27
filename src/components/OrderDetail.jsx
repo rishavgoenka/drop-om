@@ -1,13 +1,25 @@
 import React, { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { computeOrderTotals, derivePaymentStatus, deriveSupplierStatus, shippingBadge, paymentBadge, formatINR, formatDate, formatDateTime, orderItemNames } from '../utils';
+import { computeOrderTotals, derivePaymentStatus, deriveSupplierStatus, shippingBadge, paymentBadge, formatINR, formatDate, formatDateTime } from '../utils';
 import { ArrowLeft } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
+import InHouseDropdown from './InHouseDropdown';
+
+const SHIPPING_OPTIONS = [
+  { value: 'ordered', label: 'Ordered' },
+  { value: 'in_transit', label: 'In Transit' },
+  { value: 'delivered', label: 'Delivered' },
+];
 
 export default function OrderDetail({ orders, transactions, updateOrder, deleteOrder, deleteTransaction }) {
   const nav = useNavigate();
   const { id } = useParams();
   const order = orders.find(o => o.id === id);
+
+  const [editShip, setEditShip] = useState(false);
+  const [shipVal, setShipVal] = useState('ordered');
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
   if (!order) return <div className="page-shell"><div className="empty-state">Order not found.</div></div>;
 
   const totals = computeOrderTotals(order);
@@ -18,11 +30,9 @@ export default function OrderDetail({ orders, transactions, updateOrder, deleteO
 
   const orderTxns = transactions.filter(t => t.orderId === id).sort((a, b) => new Date(b.date) - new Date(a.date));
 
-  const [editShip, setEditShip] = useState(false);
-  const [shipVal, setShipVal]   = useState(order.shippingStatus);
-  const [confirmDelete, setConfirmDelete] = useState(null);
+  const effectiveShipVal = editShip ? shipVal : order.shippingStatus;
 
-  const saveShip = () => { updateOrder({ ...order, shippingStatus: shipVal }); setEditShip(false); };
+  const saveShip = () => { updateOrder({ ...order, shippingStatus: effectiveShipVal }); setEditShip(false); };
 
   return (
     <div className="page-shell fade-in">
@@ -37,6 +47,7 @@ export default function OrderDetail({ orders, transactions, updateOrder, deleteO
           <div>
             <div style={{ fontWeight: 700 }}>{order.customerName}</div>
             {order.customerPhone && <div className="txt-dim" style={{ fontSize: '0.78rem' }}>{order.customerPhone}</div>}
+            {order.supplierName && <div className="txt-dim" style={{ fontSize: '0.72rem', marginTop: '0.25rem' }}>Supplier: {order.supplierName}</div>}
           </div>
           <div style={{ textAlign: 'right', fontSize: '0.75rem', color: 'var(--txt-3)' }}>
             {formatDate(order.date)}
@@ -74,10 +85,17 @@ export default function OrderDetail({ orders, transactions, updateOrder, deleteO
         <span className={`badge ${pb.cls}`}>{pb.label}</span>
         {editShip ? (
           <div className="flex gap-2 items-center" style={{ flex: 1 }}>
-            <select value={shipVal} onChange={e => setShipVal(e.target.value)} style={{ flex: 1 }}><option value="ordered">Ordered</option><option value="in_transit">In Transit</option><option value="delivered">Delivered</option></select>
+            <div style={{ flex: 1 }}>
+              <InHouseDropdown
+                value={effectiveShipVal}
+                options={SHIPPING_OPTIONS}
+                onChange={setShipVal}
+                placeholder="Select status"
+              />
+            </div>
             <button className="btn btn-primary btn-sm" onClick={saveShip}>Save</button>
           </div>
-        ) : (<><span className={`badge ${sb.cls}`}>{sb.label}</span><button className="btn btn-ghost btn-sm" onClick={() => setEditShip(true)} style={{ marginLeft: 'auto' }}>Change</button></>)}
+        ) : (<><span className={`badge ${sb.cls}`}>{sb.label}</span><button className="btn btn-ghost btn-sm" onClick={() => { setShipVal(order.shippingStatus || 'ordered'); setEditShip(true); }} style={{ marginLeft: 'auto' }}>Change</button></>)}
       </div>
 
       {/* Action buttons */}

@@ -1,14 +1,28 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { computeOrderTotals, derivePaymentStatus, formatINR, newId } from '../utils';
-import { Plus, Pencil, Trash2, X, Check } from 'lucide-react';
+import { computeOrderTotals, derivePaymentStatus, formatINR, safeName } from '../utils';
+import { Plus, Pencil, Trash2, X } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 
 function ContactModal({ initial, onSave, onClose, title }) {
   const [form, setForm] = useState(initial || { name: '', phone: '', address: '', notes: '' });
+  const [error, setError] = useState('');
   const handle = e => setForm(f => ({ ...f, [e.target.name]: e.target.value }));
-  const submit = e => { e.preventDefault(); if (!form.name.trim()) return alert('Name required.'); onSave(form); onClose(); };
+  const submit = e => {
+    e.preventDefault();
+    setError('');
+    if (!safeName(form.name)) {
+      setError('Name is required.');
+      return;
+    }
+    const res = onSave(form);
+    if (res?.ok === false) {
+      setError(res.reason || 'Unable to save customer.');
+      return;
+    }
+    onClose();
+  };
   return createPortal(
     <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal-sheet">
@@ -18,6 +32,7 @@ function ContactModal({ initial, onSave, onClose, title }) {
           <button className="btn btn-ghost btn-sm" onClick={onClose}><X size={14} /></button>
         </div>
         <form onSubmit={submit} className="flex-col gap-3">
+          {error && <div className="form-error">{error}</div>}
           <div className="form-group"><label>Name *</label><input name="name" value={form.name} onChange={handle} required autoFocus placeholder="Name" /></div>
           <div className="form-group"><label>Phone</label><input type="tel" name="phone" value={form.phone} onChange={handle} placeholder="Phone" /></div>
           <div className="form-group"><label>Address</label><input name="address" value={form.address} onChange={handle} placeholder="Address" /></div>
@@ -34,13 +49,13 @@ export default function CustomerList({ orders, transactions, customers, addCusto
   const nav = useNavigate();
   const [modal, setModal] = useState(null); // null | { mode: 'add' | 'edit', customer? }
   const [confirmDelete, setConfirmDelete] = useState(null); // customer id
+  const [actionError, setActionError] = useState('');
 
   const storedCustomers = customers || [];
 
-  // Merge with order-derived (show stored first, then any from orders not yet in stored)
-  const allNames = new Set(storedCustomers.map(c => c.name.trim().toLowerCase()));
   const enriched = [...storedCustomers].map(c => {
-    const custOrders = orders.filter(o => (o.customerName || '').trim().toLowerCase() === c.name.trim().toLowerCase());
+    const cKey = safeName(c?.name).toLowerCase();
+    const custOrders = orders.filter(o => safeName(o?.customerName).toLowerCase() === cKey);
     let totalValue = 0, totalProfit = 0, pendingBuyer = 0;
     custOrders.forEach(o => {
       const t = computeOrderTotals(o);
@@ -52,15 +67,20 @@ export default function CustomerList({ orders, transactions, customers, addCusto
     return { ...c, orderCount: custOrders.length, totalValue, totalProfit, pendingBuyer };
   }).sort((a, b) => a.name.localeCompare(b.name));
 
-  const handleAdd = (form) => addCustomer({ id: newId(), name: form.name, phone: form.phone, address: form.address, notes: form.notes });
-  const handleEdit = (form) => updateCustomer({ ...modal.customer, name: form.name, phone: form.phone, address: form.address, notes: form.notes });
+  const handleAdd = (form) => addCustomer({ name: form.name, phone: form.phone, address: form.address, notes: form.notes });
+  const handleEdit = (form) => {
+    updateCustomer({ ...modal.customer, name: safeName(form.name), phone: safeName(form.phone), address: safeName(form.address), notes: safeName(form.notes) });
+    return { ok: true };
+  };
 
   return (
     <div className="page-shell fade-in">
       <div className="flex justify-between items-center">
         <div className="page-header"><h2>Buyers</h2><p>{enriched.length} customers</p></div>
-        <button className="btn btn-primary btn-sm" onClick={() => setModal({ mode: 'add' })}><Plus size={14} /> Add</button>
+        <button className="btn btn-primary btn-sm" onClick={() => { setActionError(''); setModal({ mode: 'add' }); }}><Plus size={14} /> Add</button>
       </div>
+
+      {actionError && <div className="form-error">{actionError}</div>}
 
       {enriched.length === 0 ? (
         <div className="empty-state">No customers yet. Add one or create an order.</div>
@@ -68,8 +88,8 @@ export default function CustomerList({ orders, transactions, customers, addCusto
         <div className="flex-col gap-2">
           {enriched.map(c => (
             <div key={c.id || c.name} className="order-item" style={{ cursor: 'default' }}>
-              <div className="order-main" onClick={() => nav(`/customers/${encodeURIComponent(c.name)}`)} style={{ cursor: 'pointer' }}>
-                <div className="item-name">{c.name}</div>
+              <div className="order-main" onClick={() => nav(`/customers/${encodeURIComponent(safeName(c.name))}`)} style={{ cursor: 'pointer' }}>
+                <div className="item-name">{safeName(c.name)}</div>
                 {c.phone && <div className="cust-name">{c.phone}</div>}
                 <div className="badges">
                   <span className="badge badge-brand">{c.orderCount} order{c.orderCount !== 1 ? 's' : ''}</span>
@@ -91,7 +111,17 @@ export default function CustomerList({ orders, transactions, customers, addCusto
 
       {modal?.mode === 'add' && <ContactModal title="New Customer" onSave={handleAdd} onClose={() => setModal(null)} />}
       {modal?.mode === 'edit' && <ContactModal title="Edit Customer" initial={modal.customer} onSave={handleEdit} onClose={() => setModal(null)} />}
-      {confirmDelete && <ConfirmModal message="Are you sure you want to delete this customer? This action cannot be undone." onConfirm={() => { deleteCustomer(confirmDelete); setConfirmDelete(null); }} onCancel={() => setConfirmDelete(null)} />}
+      {confirmDelete && (
+        <ConfirmModal
+          message="Delete customer? This works only when no linked orders or credit transactions exist."
+          onConfirm={() => {
+            const res = deleteCustomer(confirmDelete);
+            if (res?.ok === false) setActionError(res.reason || 'Unable to delete customer.');
+            setConfirmDelete(null);
+          }}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
     </div>
   );
 }

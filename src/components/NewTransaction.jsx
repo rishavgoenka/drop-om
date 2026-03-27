@@ -1,7 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { newId, formatINR, computeOrderTotals, derivePaymentStatus, deriveSupplierStatus, orderItemNames, toISTDateTimeString, getUniqueCustomers } from '../utils';
+import { newId, formatINR, computeOrderTotals, derivePaymentStatus, deriveSupplierStatus, orderItemNames, toISTDateTimeString, getUniqueCustomers, isoToISTDateTimeInput, istDateTimeInputToISO, safeName } from '../utils';
 import { ArrowLeft } from 'lucide-react';
+import InHouseDropdown from './InHouseDropdown';
 
 export default function NewTransaction({ orders, transactions, customers, suppliers, addTransaction, updateTransaction }) {
   const nav = useNavigate();
@@ -19,20 +20,39 @@ export default function NewTransaction({ orders, transactions, customers, suppli
   const [party, setParty] = useState(existingTxn?.partyName || '');
   const [partySearch, setPartySearch] = useState(existingTxn?.partyName || '');
   const [showDropdown, setShowDropdown] = useState(false);
-  const [date, setDate] = useState(existingTxn ? existingTxn.date.slice(0, 16) : toISTDateTimeString());
+  const [date, setDate] = useState(existingTxn ? isoToISTDateTimeInput(existingTxn.date) : toISTDateTimeString());
   const [notes, setNotes] = useState(existingTxn?.notes || '');
+  const [formError, setFormError] = useState('');
+  const orderSelectRef = useRef(null);
+
+  useEffect(() => {
+    if (isEdit) return;
+    const frame = requestAnimationFrame(() => {
+      orderSelectRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [isEdit]);
 
   // Build all party options from customers, suppliers, and order-derived customers
-  const storedCustomers = customers || [];
-  const storedSuppliers = suppliers || [];
   const orderCustomers = getUniqueCustomers(orders);
   const allParties = useMemo(() => {
+    const storedCustomers = customers || [];
+    const storedSuppliers = suppliers || [];
     const map = {};
-    orderCustomers.forEach(c => { map[c.name.toLowerCase()] = { name: c.name, type: 'buyer' }; });
-    storedCustomers.forEach(c => { map[c.name.toLowerCase()] = { name: c.name, type: 'buyer' }; });
-    storedSuppliers.forEach(s => { map[s.name.toLowerCase()] = { name: s.name, type: 'supplier' }; });
+    orderCustomers.forEach(c => {
+      const name = safeName(c?.name);
+      if (name) map[name.toLowerCase()] = { name, type: 'buyer' };
+    });
+    storedCustomers.forEach(c => {
+      const name = safeName(c?.name);
+      if (name) map[name.toLowerCase()] = { name, type: 'buyer' };
+    });
+    storedSuppliers.forEach(s => {
+      const name = safeName(s?.name);
+      if (name) map[name.toLowerCase()] = { name, type: 'supplier' };
+    });
     return Object.values(map).sort((a, b) => a.name.localeCompare(b.name));
-  }, [customers, suppliers, orders]);
+  }, [customers, suppliers, orderCustomers]);
 
   const filteredParties = partySearch
     ? allParties.filter(p => p.name.toLowerCase().includes(partySearch.toLowerCase()))
@@ -45,16 +65,34 @@ export default function NewTransaction({ orders, transactions, customers, suppli
   };
 
   const selectedOrder = orders.find(o => o.id === orderId);
+  const orderOptions = useMemo(
+    () => [...orders].reverse().map((o) => ({
+      value: o.id,
+      label: `${orderItemNames(o)} — ${o.customerName}`,
+      meta: safeName(o.supplierName) ? `Supplier: ${safeName(o.supplierName)}` : '',
+    })),
+    [orders],
+  );
 
   const handleOrderChange = (newOid) => {
     setOid(newOid);
     const o = orders.find(o => o.id === newOid);
     if (o && !party) {
-      const defaultParty = type === 'credit' ? o.customerName : '';
+      const defaultParty = type === 'credit' ? safeName(o.customerName) : safeName(o.supplierName || o.customerName);
       setParty(defaultParty);
       setPartySearch(defaultParty);
     }
   };
+
+  useEffect(() => {
+    if (!selectedOrder || partySearch) return;
+    const defaultParty = type === 'credit'
+      ? safeName(selectedOrder.customerName)
+      : safeName(selectedOrder.supplierName || selectedOrder.customerName);
+    if (!defaultParty) return;
+    setParty(defaultParty);
+    setPartySearch(defaultParty);
+  }, [selectedOrder, type, partySearch]);
 
   const balanceInfo = useMemo(() => {
     if (!selectedOrder) return null;
@@ -66,11 +104,31 @@ export default function NewTransaction({ orders, transactions, customers, suppli
 
   const submit = (e) => {
     e.preventDefault();
-    const amt = Number(amount);
-    if (!amt || amt <= 0) return alert('Enter valid amount.');
-    if (!orderId) return alert('Select an order.');
+    setFormError('');
 
-    const txn = { id: isEdit ? editId : newId(), type, orderId, amount: amt, partyName: party || partySearch, date: new Date(date).toISOString(), notes };
+    const amt = Number(amount);
+    if (!amt || amt <= 0) {
+      setFormError('Enter a valid amount greater than zero.');
+      return;
+    }
+    if (!orderId) {
+      setFormError('Select an order.');
+      return;
+    }
+
+    const partyName = safeName(party || partySearch);
+    if (!partyName) {
+      setFormError(type === 'credit' ? 'Please enter who paid you.' : 'Please enter who you paid.');
+      return;
+    }
+
+    const dateISO = istDateTimeInputToISO(date);
+    if (!dateISO) {
+      setFormError('Enter a valid date and time.');
+      return;
+    }
+
+    const txn = { id: isEdit ? editId : newId(), type, orderId, amount: amt, partyName, date: dateISO, notes: safeName(notes) };
     if (isEdit) updateTransaction(txn);
     else addTransaction(txn);
     nav(-1);
@@ -84,6 +142,7 @@ export default function NewTransaction({ orders, transactions, customers, suppli
       </div>
 
       <form onSubmit={submit} className="flex-col gap-3">
+        {formError && <div className="form-error">{formError}</div>}
         {/* Type toggle */}
         <div className="form-group">
           <label>Type</label>
@@ -96,12 +155,16 @@ export default function NewTransaction({ orders, transactions, customers, suppli
         {/* Order selector */}
         <div className="form-group">
           <label>Order *</label>
-          <select value={orderId} onChange={e => handleOrderChange(e.target.value)} required>
-            <option value="" disabled>Select order...</option>
-            {[...orders].reverse().map(o => (
-              <option key={o.id} value={o.id}>{orderItemNames(o)} — {o.customerName}</option>
-            ))}
-          </select>
+          <InHouseDropdown
+            ref={orderSelectRef}
+            value={orderId}
+            options={orderOptions}
+            onChange={handleOrderChange}
+            placeholder="Select order..."
+            searchable
+            searchPlaceholder="Search order by item or customer..."
+          />
+          <input type="hidden" value={orderId} required />
         </div>
 
         {/* Balance context */}
@@ -125,7 +188,7 @@ export default function NewTransaction({ orders, transactions, customers, suppli
 
         <div className="form-group">
           <label>Amount (Rs.) *</label>
-          <input type="number" value={amount} onChange={e => setAmt(e.target.value)} min="1" required placeholder="0" autoFocus />
+          <input type="number" value={amount} onChange={e => setAmt(e.target.value)} min="1" required placeholder="0" />
         </div>
 
         {/* Party name with searchable dropdown */}

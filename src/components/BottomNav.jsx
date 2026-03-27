@@ -16,11 +16,11 @@ export default function BottomNav() {
 
   return (
     <nav className="bottom-nav">
-      {TABS.map(({ path, label, icon: Icon }) => {
+      {TABS.map(({ path, label, icon }) => {
         const active = path === '/' ? pathname === '/' : pathname.startsWith(path);
         return (
-          <button key={path} className={`nav-btn ${active ? 'active' : ''}`} onClick={() => nav(path)}>
-            <Icon size={17} strokeWidth={1.75} />
+          <button type="button" key={path} className={`nav-btn ${active ? 'active' : ''}`} onClick={() => nav(path)}>
+            {React.createElement(icon, { size: 17, strokeWidth: 1.75 })}
             <span>{label}</span>
           </button>
         );

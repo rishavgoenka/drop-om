@@ -1,10 +1,19 @@
 import { useState, useEffect } from 'react';
 
-export function useLocalStorage(key, initialValue) {
+function resolveValidatedValue(value, initialValue, validate) {
+  if (typeof validate !== 'function') return value;
+  const next = validate(value);
+  return next === undefined ? initialValue : next;
+}
+
+export function useLocalStorage(key, initialValue, options = {}) {
+  const { validate } = options;
+
   const [storedValue, setStoredValue] = useState(() => {
     try {
       const item = window.localStorage.getItem(key);
-      return item ? JSON.parse(item) : initialValue;
+      const parsed = item ? JSON.parse(item) : initialValue;
+      return resolveValidatedValue(parsed, initialValue, validate);
     } catch (error) {
       console.warn(`Error reading localStorage key "${key}":`, error);
       return initialValue;
@@ -13,11 +22,12 @@ export function useLocalStorage(key, initialValue) {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(key, JSON.stringify(storedValue));
+      const valueToPersist = resolveValidatedValue(storedValue, initialValue, validate);
+      window.localStorage.setItem(key, JSON.stringify(valueToPersist));
     } catch (error) {
       console.warn(`Error setting localStorage key "${key}":`, error);
     }
-  }, [key, storedValue]);
+  }, [initialValue, key, storedValue, validate]);
 
   return [storedValue, setStoredValue];
 }

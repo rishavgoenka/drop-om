@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { formatINR, formatDateTime, orderItemNames } from '../utils';
 import { Plus } from 'lucide-react';
@@ -10,8 +10,12 @@ export default function FinanceView({ transactions, orders, deleteTransaction })
   const totalCr = transactions.filter(t => t.type === 'credit').reduce((s, t) => s + (Number(t.amount) || 0), 0);
   const totalDr = transactions.filter(t => t.type === 'debit').reduce((s, t) => s + (Number(t.amount) || 0), 0);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const orderById = useMemo(() => new Map(orders.map((o) => [o.id, o])), [orders]);
 
-  const orderLabel = (oid) => { const o = orders.find(o => o.id === oid); return o ? orderItemNames(o) : oid; };
+  const orderLabel = (oid) => {
+    const o = orderById.get(oid);
+    return o ? orderItemNames(o) : oid;
+  };
 
   return (
     <div className="page-shell fade-in">

@@ -1,25 +1,26 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { formatINR, formatDate, formatDateTime } from '../utils';
+import { formatINR, formatDateTime, safeDecodeURIComponent, safeName } from '../utils';
 import { ArrowLeft } from 'lucide-react';
 
 export default function SupplierOrders({ suppliers, transactions, orders }) {
   const nav = useNavigate();
   const { name } = useParams();
-  const supplierName = decodeURIComponent(name);
-  const supplier = (suppliers || []).find(s => s.name.trim().toLowerCase() === supplierName.trim().toLowerCase());
+  const supplierName = safeDecodeURIComponent(name);
+  const supplierKey = safeName(supplierName).toLowerCase();
+  const supplier = (suppliers || []).find(s => safeName(s?.name).toLowerCase() === supplierKey);
 
   // Find all debit transactions for this supplier
   const supplierTxns = transactions
-    .filter(t => t.type === 'debit' && (t.partyName || '').trim().toLowerCase() === supplierName.trim().toLowerCase())
+    .filter(t => t.type === 'debit' && safeName(t?.partyName).toLowerCase() === supplierKey)
     .sort((a, b) => new Date(b.date) - new Date(a.date));
 
   const totalPaid = supplierTxns.reduce((s, t) => s + (Number(t.amount) || 0), 0);
   const orderIds = [...new Set(supplierTxns.map(t => t.orderId))];
-  const relatedOrders = orders.filter(o => orderIds.includes(o.id));
+  const orderById = useMemo(() => new Map(orders.map((o) => [o.id, o])), [orders]);
 
   const orderLabel = (oid) => {
-    const o = orders.find(o => o.id === oid);
+    const o = orderById.get(oid);
     if (!o) return oid;
     const items = (o.items || []).map(i => i.name).filter(Boolean).join(', ');
     return `${items || 'Untitled'} — ${o.customerName}`;

@@ -1,21 +1,62 @@
+const IST_TIMEZONE = 'Asia/Kolkata';
+
+function getTimeZoneParts(date, timeZone = IST_TIMEZONE) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(date);
+
+  const value = (type) => parts.find((p) => p.type === type)?.value || '00';
+  return {
+    year: value('year'),
+    month: value('month'),
+    day: value('day'),
+    hour: value('hour'),
+    minute: value('minute'),
+    second: value('second'),
+  };
+}
+
 // ─── IST Time helpers ─────────────────────────────────────
 // IST = UTC+5:30
 export function nowIST() {
   const now = new Date();
-  // Get IST offset: UTC + 5:30 hours
-  const istOffset = 5.5 * 60 * 60 * 1000;
-  const utc = now.getTime() + now.getTimezoneOffset() * 60 * 1000;
-  return new Date(utc + istOffset);
+  const parts = getTimeZoneParts(now);
+  return new Date(`${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}+05:30`);
 }
 
 export function toISTDateString() {
-  const d = nowIST();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const p = getTimeZoneParts(new Date());
+  return `${p.year}-${p.month}-${p.day}`;
 }
 
 export function toISTDateTimeString() {
-  const d = nowIST();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const p = getTimeZoneParts(new Date());
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+}
+
+export function istDateInputToISO(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return null;
+  return new Date(`${value}T00:00:00+05:30`).toISOString();
+}
+
+export function istDateTimeInputToISO(value) {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value || '')) return null;
+  return new Date(`${value}:00+05:30`).toISOString();
+}
+
+export function isoToISTDateTimeInput(iso) {
+  if (!iso) return toISTDateTimeString();
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return toISTDateTimeString();
+  const p = getTimeZoneParts(d);
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
 }
 
 // ─── Formatting ─────────────────────────────────────────
@@ -26,12 +67,12 @@ export function formatINR(value) {
 
 export function formatDate(iso) {
   if (!iso) return '';
-  return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit', timeZone: 'Asia/Kolkata' });
+  return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit', timeZone: IST_TIMEZONE });
 }
 
 export function formatDateTime(iso) {
   if (!iso) return '';
-  return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata', hour12: true });
+  return new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: IST_TIMEZONE, hour12: true });
 }
 
 // ─── Badges ─────────────────────────────────────────────
@@ -107,19 +148,35 @@ export function deriveSupplierStatus(order, txns) {
 
 // ─── Helpers ────────────────────────────────────────────
 export function newId() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+}
+
+export function safeName(value, fallback = '') {
+  return typeof value === 'string' ? value.trim() : fallback;
+}
+
+export function safeDecodeURIComponent(value) {
+  try {
+    return decodeURIComponent(value || '');
+  } catch {
+    return typeof value === 'string' ? value : '';
+  }
 }
 
 export function getUniqueCustomers(orders) {
   const map = {};
-  orders.forEach(o => {
-    if (!o.customerName) return;
-    const key = o.customerName.trim().toLowerCase();
+  (orders || []).forEach(o => {
+    const customerName = safeName(o?.customerName);
+    if (!customerName) return;
+    const key = customerName.toLowerCase();
     if (!map[key]) {
-      map[key] = { name: o.customerName, phone: o.customerPhone || '', address: o.customerAddress || '' };
+      map[key] = { name: customerName, phone: safeName(o?.customerPhone), address: safeName(o?.customerAddress) };
     } else {
-      if (o.customerPhone && !map[key].phone) map[key].phone = o.customerPhone;
-      if (o.customerAddress && !map[key].address) map[key].address = o.customerAddress;
+      if (o?.customerPhone && !map[key].phone) map[key].phone = safeName(o.customerPhone);
+      if (o?.customerAddress && !map[key].address) map[key].address = safeName(o.customerAddress);
     }
   });
   return Object.values(map).sort((a, b) => a.name.localeCompare(b.name));

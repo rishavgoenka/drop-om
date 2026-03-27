@@ -1,14 +1,28 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { computeOrderTotals, deriveSupplierStatus, formatINR, newId } from '../utils';
+import { formatINR, safeName } from '../utils';
 import { Plus, Pencil, Trash2, X } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 
 function ContactModal({ initial, onSave, onClose, title }) {
   const [form, setForm] = useState(initial || { name: '', phone: '', address: '', notes: '' });
+  const [error, setError] = useState('');
   const handle = e => setForm(f => ({ ...f, [e.target.name]: e.target.value }));
-  const submit = e => { e.preventDefault(); if (!form.name.trim()) return alert('Name required.'); onSave(form); onClose(); };
+  const submit = e => {
+    e.preventDefault();
+    setError('');
+    if (!safeName(form.name)) {
+      setError('Name is required.');
+      return;
+    }
+    const res = onSave(form);
+    if (res?.ok === false) {
+      setError(res.reason || 'Unable to save supplier.');
+      return;
+    }
+    onClose();
+  };
   return createPortal(
     <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal-sheet">
@@ -18,6 +32,7 @@ function ContactModal({ initial, onSave, onClose, title }) {
           <button className="btn btn-ghost btn-sm" onClick={onClose}><X size={14} /></button>
         </div>
         <form onSubmit={submit} className="flex-col gap-3">
+          {error && <div className="form-error">{error}</div>}
           <div className="form-group"><label>Name *</label><input name="name" value={form.name} onChange={handle} required autoFocus placeholder="Supplier name" /></div>
           <div className="form-group"><label>Phone / WhatsApp</label><input type="tel" name="phone" value={form.phone} onChange={handle} placeholder="Phone" /></div>
           <div className="form-group"><label>Address</label><input name="address" value={form.address} onChange={handle} placeholder="Address" /></div>
@@ -30,30 +45,37 @@ function ContactModal({ initial, onSave, onClose, title }) {
   );
 }
 
-export default function SupplierList({ orders, transactions, suppliers, addSupplier, updateSupplier, deleteSupplier }) {
+export default function SupplierList({ transactions, suppliers, addSupplier, updateSupplier, deleteSupplier }) {
   const nav = useNavigate();
   const [modal, setModal] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [actionError, setActionError] = useState('');
 
   const storedSuppliers = suppliers || [];
 
   const enriched = storedSuppliers.map(s => {
+    const sKey = safeName(s?.name).toLowerCase();
     // Match orders where a debit transaction partyName matches supplier name
-    const supplierTxns = transactions.filter(t => t.type === 'debit' && (t.partyName || '').trim().toLowerCase() === s.name.trim().toLowerCase());
+    const supplierTxns = transactions.filter(t => t.type === 'debit' && safeName(t?.partyName).toLowerCase() === sKey);
     const totalPaid = supplierTxns.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
     const orderIds = [...new Set(supplierTxns.map(t => t.orderId))];
     return { ...s, orderCount: orderIds.length, totalPaid };
-  }).sort((a, b) => a.name.localeCompare(b.name));
+  }).sort((a, b) => safeName(a?.name).localeCompare(safeName(b?.name)));
 
-  const handleAdd = (form) => addSupplier({ id: newId(), name: form.name, phone: form.phone, address: form.address, notes: form.notes });
-  const handleEdit = (form) => updateSupplier({ ...modal.supplier, name: form.name, phone: form.phone, address: form.address, notes: form.notes });
+  const handleAdd = (form) => addSupplier({ name: form.name, phone: form.phone, address: form.address, notes: form.notes });
+  const handleEdit = (form) => {
+    updateSupplier({ ...modal.supplier, name: safeName(form.name), phone: safeName(form.phone), address: safeName(form.address), notes: safeName(form.notes) });
+    return { ok: true };
+  };
 
   return (
     <div className="page-shell fade-in">
       <div className="flex justify-between items-center">
         <div className="page-header"><h2>Suppliers</h2><p>{enriched.length} suppliers</p></div>
-        <button className="btn btn-primary btn-sm" onClick={() => setModal({ mode: 'add' })}><Plus size={14} /> Add</button>
+        <button className="btn btn-primary btn-sm" onClick={() => { setActionError(''); setModal({ mode: 'add' }); }}><Plus size={14} /> Add</button>
       </div>
+
+      {actionError && <div className="form-error">{actionError}</div>}
 
       {enriched.length === 0 ? (
         <div className="empty-state">No suppliers yet. Add one to track balances.</div>
@@ -61,8 +83,8 @@ export default function SupplierList({ orders, transactions, suppliers, addSuppl
         <div className="flex-col gap-2">
           {enriched.map(s => (
             <div key={s.id} className="order-item" style={{ cursor: 'default' }}>
-              <div className="order-main" onClick={() => nav(`/suppliers/${encodeURIComponent(s.name)}`)} style={{ cursor: 'pointer' }}>
-                <div className="item-name">{s.name}</div>
+              <div className="order-main" onClick={() => nav(`/suppliers/${encodeURIComponent(safeName(s.name))}`)} style={{ cursor: 'pointer' }}>
+                <div className="item-name">{safeName(s.name)}</div>
                 {s.phone && <div className="cust-name">{s.phone}</div>}
                 {s.notes && <div className="cust-name" style={{ fontSize: '0.7rem', color: 'var(--txt-3)' }}>{s.notes}</div>}
                 <div className="badges">
@@ -84,7 +106,17 @@ export default function SupplierList({ orders, transactions, suppliers, addSuppl
 
       {modal?.mode === 'add' && <ContactModal title="New Supplier" onSave={handleAdd} onClose={() => setModal(null)} />}
       {modal?.mode === 'edit' && <ContactModal title="Edit Supplier" initial={modal.supplier} onSave={handleEdit} onClose={() => setModal(null)} />}
-      {confirmDelete && <ConfirmModal message="Are you sure you want to delete this supplier? This action cannot be undone." onConfirm={() => { deleteSupplier(confirmDelete); setConfirmDelete(null); }} onCancel={() => setConfirmDelete(null)} />}
+      {confirmDelete && (
+        <ConfirmModal
+          message="Delete supplier? This works only when no linked debit transactions exist."
+          onConfirm={() => {
+            const res = deleteSupplier(confirmDelete);
+            if (res?.ok === false) setActionError(res.reason || 'Unable to delete supplier.');
+            setConfirmDelete(null);
+          }}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
     </div>
   );
 }

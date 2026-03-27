@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { computeOrderTotals, derivePaymentStatus, shippingBadge, paymentBadge, formatINR, formatDate, orderItemNames } from '../utils';
 import { Search, Plus } from 'lucide-react';
@@ -23,14 +23,20 @@ export default function OrdersView({ orders, transactions }) {
   const [payF, setPayF] = useState('all');
   const [shipF, setShipF] = useState('all');
 
+  const paymentByOrderId = useMemo(() => {
+    const map = new Map();
+    orders.forEach((o) => map.set(o.id, derivePaymentStatus(o, transactions)));
+    return map;
+  }, [orders, transactions]);
+
   const filtered = [...orders].reverse().filter(o => {
+    const ps = paymentByOrderId.get(o.id);
     if (search) {
       const q = search.toLowerCase();
-      if (!orderItemNames(o).toLowerCase().includes(q) && !(o.customerName || '').toLowerCase().includes(q)) return false;
+      if (!orderItemNames(o).toLowerCase().includes(q) && !(o.customerName || '').toLowerCase().includes(q) && !(o.supplierName || '').toLowerCase().includes(q)) return false;
     }
     if (shipF !== 'all' && o.shippingStatus !== shipF) return false;
     if (payF !== 'all') {
-      const ps = derivePaymentStatus(o, transactions);
       if (ps.status !== payF) return false;
     }
     return true;
@@ -74,17 +80,21 @@ export default function OrdersView({ orders, transactions }) {
           </div>
           {filtered.map((o, i) => {
             const t = computeOrderTotals(o);
-            const ps = derivePaymentStatus(o, transactions);
+            const ps = paymentByOrderId.get(o.id);
             const sb = shippingBadge(o.shippingStatus);
             const pb = paymentBadge(ps.status);
             return (
-              <div key={o.id} onClick={() => nav(`/orders/${o.id}`)} style={{ display: 'grid', gridTemplateColumns: '70px 1fr 80px 70px', padding: '0.55rem 0.65rem', background: i % 2 === 0 ? 'var(--bg-1)' : 'var(--bg)', cursor: 'pointer', transition: 'background 0.15s', borderBottom: i < filtered.length - 1 ? '1px solid var(--border)' : 'none', alignItems: 'start' }}
-                onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-3)'}
-                onMouseLeave={e => e.currentTarget.style.background = i % 2 === 0 ? 'var(--bg-1)' : 'var(--bg)'}
+              <button
+                type="button"
+                key={o.id}
+                className="orders-row"
+                onClick={() => nav(`/orders/${o.id}`)}
+                style={{ display: 'grid', gridTemplateColumns: '70px 1fr 80px 70px', padding: '0.55rem 0.65rem', background: i % 2 === 0 ? 'var(--bg-1)' : 'var(--bg)', borderBottom: i < filtered.length - 1 ? '1px solid var(--border)' : 'none', alignItems: 'start' }}
               >
                 <span style={{ fontSize: '0.7rem', color: 'var(--txt-3)', whiteSpace: 'nowrap', paddingTop: '0.1rem' }}>{formatDate(o.date)}</span>
                 <div>
                   <div style={{ fontWeight: 600, fontSize: '0.82rem', marginBottom: '0.15rem' }}>{o.customerName}</div>
+                  {o.supplierName && <div style={{ fontSize: '0.68rem', color: 'var(--txt-3)', marginBottom: '0.2rem' }}>Supplier: {o.supplierName}</div>}
                   <div style={{ fontSize: '0.72rem', color: 'var(--txt-2)', marginBottom: '0.2rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{orderItemNames(o)}</div>
                   <div className="flex gap-1 flex-wrap">
                     <span className={`badge ${sb.cls}`}>{sb.label}</span>
@@ -98,7 +108,7 @@ export default function OrdersView({ orders, transactions }) {
                 <div style={{ textAlign: 'right', fontSize: '0.8rem', fontWeight: 700, color: 'var(--green)', fontVariantNumeric: 'tabular-nums' }}>
                   Rs.{formatINR(t.profit)}
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>

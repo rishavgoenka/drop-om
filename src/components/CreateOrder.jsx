@@ -1,11 +1,17 @@
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { newId, getUniqueCustomers, computeOrderTotals, formatINR, toISTDateString } from '../utils';
+import { newId, getUniqueCustomers, computeOrderTotals, formatINR, toISTDateString, istDateInputToISO, safeName } from '../utils';
 import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
+import InHouseDropdown from './InHouseDropdown';
 
 const EMPTY_ITEM = { name: '', costPrice: '', sellingPrice: '', qty: 1 };
+const SHIPPING_STATUS_OPTIONS = [
+  { value: 'ordered', label: 'Ordered' },
+  { value: 'in_transit', label: 'In Transit' },
+  { value: 'delivered', label: 'Delivered' },
+];
 
-export default function CreateOrder({ orders, customers, addOrder }) {
+export default function CreateOrder({ orders, customers, suppliers, addOrder, addCustomer, addSupplier }) {
   const nav = useNavigate();
 
   // Merge stored customers + customers from old orders
@@ -13,24 +19,53 @@ export default function CreateOrder({ orders, customers, addOrder }) {
   const orderCustomers = getUniqueCustomers(orders);
   const allCustomers = [...storedCustomers];
   orderCustomers.forEach(oc => {
-    if (!allCustomers.find(c => c.name.trim().toLowerCase() === oc.name.trim().toLowerCase())) {
+    const ocKey = safeName(oc?.name).toLowerCase();
+    if (!ocKey) return;
+    if (!allCustomers.find(c => safeName(c?.name).toLowerCase() === ocKey)) {
       allCustomers.push(oc);
     }
   });
-  allCustomers.sort((a, b) => a.name.localeCompare(b.name));
+  allCustomers.sort((a, b) => safeName(a?.name).localeCompare(safeName(b?.name)));
+
+  // Merge stored suppliers + suppliers from old orders
+  const storedSuppliers = suppliers || [];
+  const orderSuppliers = [];
+  (orders || []).forEach((o) => {
+    const name = safeName(o?.supplierName);
+    if (!name) return;
+    const key = name.toLowerCase();
+    if (!orderSuppliers.find((s) => safeName(s?.name).toLowerCase() === key)) {
+      orderSuppliers.push({
+        name,
+        phone: safeName(o?.supplierPhone),
+        address: safeName(o?.supplierAddress),
+      });
+    }
+  });
+  const allSuppliers = [...storedSuppliers];
+  orderSuppliers.forEach((s) => {
+    const sKey = safeName(s?.name).toLowerCase();
+    if (!sKey) return;
+    if (!allSuppliers.find((x) => safeName(x?.name).toLowerCase() === sKey)) {
+      allSuppliers.push(s);
+    }
+  });
+  allSuppliers.sort((a, b) => safeName(a?.name).localeCompare(safeName(b?.name)));
 
   const [isNew, setIsNew] = useState(allCustomers.length === 0);
   const [selCust, setSelCust] = useState('');
-  const [form, setForm] = useState({ customerName: '', customerPhone: '', customerAddress: '', date: toISTDateString(), shippingCost: '', shippingStatus: 'ordered', notes: '' });
+  const [isNewSupplier, setIsNewSupplier] = useState(allSuppliers.length === 0);
+  const [selSupplier, setSelSupplier] = useState('');
+  const [form, setForm] = useState({ customerName: '', customerPhone: '', customerAddress: '', supplierName: '', supplierPhone: '', supplierAddress: '', date: toISTDateString(), shippingCost: '', shippingStatus: 'ordered', notes: '' });
   const [items, setItems] = useState([{ ...EMPTY_ITEM }]);
+  const [formError, setFormError] = useState('');
 
   const nameRef = useRef(null);
-  const item0Ref = useRef(null);
+  const supplierNameRef = useRef(null);
 
   const handle = (e) => setForm(f => ({ ...f, [e.target.name]: e.target.value }));
 
-  const handleCust = (e) => {
-    const v = e.target.value;
+  const handleCust = (v) => {
     if (v === '__new__') {
       setIsNew(true); setSelCust('');
       setForm(f => ({ ...f, customerName: '', customerPhone: '', customerAddress: '' }));
@@ -39,10 +74,40 @@ export default function CreateOrder({ orders, customers, addOrder }) {
       setIsNew(false); setSelCust(v);
       const c = allCustomers.find(c => c.name === v);
       if (c) setForm(f => ({ ...f, customerName: c.name, customerPhone: c.phone || '', customerAddress: c.address || '' }));
-      // Auto-advance to first item
-      setTimeout(() => item0Ref.current?.focus(), 50);
     }
   };
+
+  const handleSupplier = (v) => {
+    if (v === '__new__') {
+      setIsNewSupplier(true); setSelSupplier('');
+      setForm(f => ({ ...f, supplierName: '', supplierPhone: '', supplierAddress: '' }));
+      setTimeout(() => supplierNameRef.current?.focus(), 50);
+      return;
+    }
+    setIsNewSupplier(false); setSelSupplier(v);
+    const s = allSuppliers.find((x) => safeName(x?.name) === v);
+    if (s) {
+      setForm(f => ({ ...f, supplierName: safeName(s.name), supplierPhone: safeName(s.phone), supplierAddress: safeName(s.address) }));
+    }
+  };
+
+  const customerOptions = [
+    ...allCustomers.map((c) => ({
+      value: safeName(c?.name),
+      label: safeName(c?.name),
+      meta: safeName(c?.phone),
+    })),
+    { value: '__new__', label: '+ New customer' },
+  ];
+
+  const supplierOptions = [
+    ...allSuppliers.map((s) => ({
+      value: safeName(s?.name),
+      label: safeName(s?.name),
+      meta: safeName(s?.phone),
+    })),
+    { value: '__new__', label: '+ New supplier' },
+  ];
 
   const updateItem = (i, k, v) => setItems(p => p.map((item, idx) => idx === i ? { ...item, [k]: v } : item));
   const addItem = () => setItems(p => [...p, { ...EMPTY_ITEM }]);
@@ -51,19 +116,73 @@ export default function CreateOrder({ orders, customers, addOrder }) {
 
   const submit = (e) => {
     e.preventDefault();
+    setFormError('');
     const name = isNew ? form.customerName : selCust;
-    if (!name?.trim()) return alert('Enter customer name.');
-    if (!items.some(i => i.name?.trim())) return alert('Add at least one item.');
+    const normalizedName = safeName(name);
+    const supplierName = isNewSupplier ? form.supplierName : selSupplier;
+    const normalizedSupplierName = safeName(supplierName || normalizedName);
+
+    if (!normalizedName) {
+      setFormError('Enter customer name.');
+      return;
+    }
+
+    if (!normalizedSupplierName) {
+      setFormError('Enter supplier name.');
+      return;
+    }
+
+    const validItems = items.filter((i) => safeName(i?.name));
+    if (validItems.length === 0) {
+      setFormError('Add at least one item with a name.');
+      return;
+    }
+
+    const dateISO = istDateInputToISO(form.date);
+    if (!dateISO) {
+      setFormError('Enter a valid order date.');
+      return;
+    }
+
+    if (isNew) {
+      const existsInStored = storedCustomers.some(
+        (c) => safeName(c?.name).toLowerCase() === normalizedName.toLowerCase(),
+      );
+      if (!existsInStored) {
+        addCustomer({
+          name: normalizedName,
+          phone: safeName(form.customerPhone),
+          address: safeName(form.customerAddress),
+        });
+      }
+    }
+
+    if (isNewSupplier) {
+      const existsSupplier = storedSuppliers.some(
+        (s) => safeName(s?.name).toLowerCase() === normalizedSupplierName.toLowerCase(),
+      );
+      if (!existsSupplier) {
+        addSupplier({
+          name: normalizedSupplierName,
+          phone: safeName(form.supplierPhone),
+          address: safeName(form.supplierAddress),
+        });
+      }
+    }
+
     addOrder({
       id: newId(),
-      date: new Date(form.date + 'T00:00:00+05:30').toISOString(),
-      customerName: name.trim(),
-      customerPhone: form.customerPhone,
-      customerAddress: form.customerAddress,
-      items: items.filter(i => i.name?.trim()),
-      shippingCost: form.shippingCost,
+      date: dateISO,
+      customerName: normalizedName,
+      customerPhone: safeName(form.customerPhone),
+      customerAddress: safeName(form.customerAddress),
+      supplierName: normalizedSupplierName,
+      supplierPhone: safeName(form.supplierPhone),
+      supplierAddress: safeName(form.supplierAddress),
+      items: validItems,
+      shippingCost: Number(form.shippingCost) || 0,
       shippingStatus: form.shippingStatus,
-      notes: form.notes,
+      notes: safeName(form.notes),
     });
     nav('/orders');
   };
@@ -76,16 +195,20 @@ export default function CreateOrder({ orders, customers, addOrder }) {
       </div>
 
       <form onSubmit={submit} className="flex-col gap-3">
+        {formError && <div className="form-error">{formError}</div>}
         <div className="section-label">Customer</div>
 
         {allCustomers.length > 0 && (
           <div className="form-group">
             <label>Select customer</label>
-            <select value={isNew ? '__new__' : selCust} onChange={handleCust}>
-              <option value="" disabled>Choose...</option>
-              {allCustomers.map(c => <option key={c.name} value={c.name}>{c.name}{c.phone ? ` — ${c.phone}` : ''}</option>)}
-              <option value="__new__">+ New customer</option>
-            </select>
+            <InHouseDropdown
+              value={isNew ? '__new__' : selCust}
+              options={customerOptions}
+              onChange={handleCust}
+              placeholder="Choose customer..."
+              searchable
+              searchPlaceholder="Search customer..."
+            />
           </div>
         )}
 
@@ -93,12 +216,40 @@ export default function CreateOrder({ orders, customers, addOrder }) {
           <>
             <div className="form-group">
               <label>Name *</label>
-              <input ref={nameRef} name="customerName" value={form.customerName} onChange={handle} required={isNew} placeholder="Customer name"
-                onKeyDown={e => { if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); item0Ref.current?.focus(); }}} />
+              <input ref={nameRef} name="customerName" value={form.customerName} onChange={handle} required={isNew} placeholder="Customer name" />
             </div>
             <div className="form-grid-2">
               <div className="form-group"><label>Phone</label><input type="tel" name="customerPhone" value={form.customerPhone} onChange={handle} placeholder="Phone" /></div>
               <div className="form-group"><label>Address</label><input name="customerAddress" value={form.customerAddress} onChange={handle} placeholder="Address" /></div>
+            </div>
+          </>
+        )}
+
+        <div className="section-label">Supplier</div>
+
+        {allSuppliers.length > 0 && (
+          <div className="form-group">
+            <label>Select supplier</label>
+            <InHouseDropdown
+              value={isNewSupplier ? '__new__' : selSupplier}
+              options={supplierOptions}
+              onChange={handleSupplier}
+              placeholder="Choose supplier..."
+              searchable
+              searchPlaceholder="Search supplier..."
+            />
+          </div>
+        )}
+
+        {isNewSupplier && (
+          <>
+            <div className="form-group">
+              <label>Supplier Name *</label>
+              <input ref={supplierNameRef} name="supplierName" value={form.supplierName} onChange={handle} required={isNewSupplier} placeholder="Supplier name" />
+            </div>
+            <div className="form-grid-2">
+              <div className="form-group"><label>Phone</label><input type="tel" name="supplierPhone" value={form.supplierPhone} onChange={handle} placeholder="Phone" /></div>
+              <div className="form-group"><label>Address</label><input name="supplierAddress" value={form.supplierAddress} onChange={handle} placeholder="Address" /></div>
             </div>
           </>
         )}
@@ -113,7 +264,7 @@ export default function CreateOrder({ orders, customers, addOrder }) {
           <div key={i} className="card card-sm" style={{ position: 'relative', background: 'var(--bg-2)' }}>
             <div className="form-group">
               <label>Item {i + 1}</label>
-              <input ref={i === 0 ? item0Ref : null} value={item.name} onChange={e => updateItem(i, 'name', e.target.value)} placeholder="Item name" />
+              <input value={item.name} onChange={e => updateItem(i, 'name', e.target.value)} placeholder="Item name" />
             </div>
             <div className="form-grid-3">
               <div className="form-group"><label>CP</label><input type="number" value={item.costPrice} onChange={e => updateItem(i, 'costPrice', e.target.value)} min="0" placeholder="0" /></div>
@@ -131,11 +282,12 @@ export default function CreateOrder({ orders, customers, addOrder }) {
         <div className="form-grid-2">
           <div className="form-group"><label>Shipping (Rs.)</label><input type="number" name="shippingCost" value={form.shippingCost} onChange={handle} min="0" placeholder="0" /></div>
           <div className="form-group"><label>Status</label>
-            <select name="shippingStatus" value={form.shippingStatus} onChange={handle}>
-              <option value="ordered">Ordered</option>
-              <option value="in_transit">In Transit</option>
-              <option value="delivered">Delivered</option>
-            </select>
+            <InHouseDropdown
+              value={form.shippingStatus}
+              options={SHIPPING_STATUS_OPTIONS}
+              onChange={(next) => setForm((f) => ({ ...f, shippingStatus: next }))}
+              placeholder="Status"
+            />
           </div>
         </div>
 

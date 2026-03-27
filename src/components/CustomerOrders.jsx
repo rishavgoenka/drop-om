@@ -1,13 +1,14 @@
 import React from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { computeOrderTotals, derivePaymentStatus, shippingBadge, paymentBadge, formatINR, formatDate, orderItemNames } from '../utils';
+import { computeOrderTotals, derivePaymentStatus, shippingBadge, paymentBadge, formatINR, formatDate, orderItemNames, safeDecodeURIComponent, safeName } from '../utils';
 import { ArrowLeft } from 'lucide-react';
 
 export default function CustomerOrders({ orders, transactions }) {
   const nav = useNavigate();
   const { name } = useParams();
-  const customerName = decodeURIComponent(name);
-  const custOrders = orders.filter(o => (o.customerName || '').trim().toLowerCase() === customerName.trim().toLowerCase());
+  const customerName = safeDecodeURIComponent(name);
+  const customerKey = safeName(customerName).toLowerCase();
+  const custOrders = orders.filter(o => safeName(o?.customerName).toLowerCase() === customerKey);
 
   let totalValue = 0, totalProfit = 0, pending = 0;
   custOrders.forEach(o => {
